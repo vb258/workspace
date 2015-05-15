@@ -1,0 +1,181 @@
+package com.ittx.wms.service.general
+
+import java.beans.BeanInfo
+import java.beans.IntrospectionException
+import java.beans.Introspector
+import java.beans.PropertyDescriptor
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
+
+import org.apache.commons.beanutils.PropertyUtilsBean
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Configuration
+import org.springframework.jdbc.core.simple.SimpleJdbcInsert
+
+import paillard.florent.springframework.simplejdbcupdate.SimpleJdbcUpdate
+
+import com.ittx.cbt.general.TtxSession
+import com.ittx.cbt.service.JdbcService
+@Configuration
+class JDBCHelper {
+	@Bean
+	JDBCHelper jdbcHelper(){
+		new JDBCHelper();
+	}
+	@Autowired
+	JdbcService jdbc
+	/**
+	 * 根据对象插入数据库表
+	 * @param session
+	 * @param tableName
+	 * @param bean 对象
+	 * @return
+	 */
+	public int insertByInstance(TtxSession session, String tableName, Object bean) {
+		String db = session.db
+		Map map = beanToMap(bean) // 要插入值的键值对
+		
+		int id = 0;
+		if(map.containsKey("id")){
+			if(map.get("id") == null || map.get("id")==0){
+				id = idAutoIncrement(session,tableName);
+				map.put("id", id);
+			}
+			id = map.get("id");
+		}
+		
+		insert(db).withTableName(tableName).execute(map);
+		//TODO：id是系统管理，在插入前先通过系统设置id然后再插入
+		return id;
+	}
+	//仅作为测试
+	public int idAutoIncrement(TtxSession session, String tableName){
+		List list = jdbc.template(session.db).queryForList("select max(id) id FROM "+tableName)
+		Map map = list.get(0);
+		Object id = map.get("id")
+		int result = 0;
+		if(id == null){
+			result = 1;
+		}else{
+			result = (Integer)id + 1;
+		}
+		return result
+	}
+	/**
+	 * 根据实例对象和条件更新数据库表
+	 * @param session
+	 * @param tableName
+	 * @param bean 对象
+	 * @param whereMap map结构的where 条件
+	 * @return
+	 */
+	public int updateByInstance(TtxSession session, String tableName, Object bean, Map whereMap) {
+		String db = session.db
+		Map map = beanToMap(bean) // 要插入值的键值对
+		update(db).withTableName(tableName).execute(map, whereMap)
+		
+	}
+	
+	SimpleJdbcInsert insert(String db) {
+		jdbc.insert(db)
+	}
+
+	SimpleJdbcInsert insert(TtxSession session) {
+		jdbc.insert(session.db)
+	}
+	
+	SimpleJdbcUpdate update(String db) {
+		jdbc.update(db)
+	}
+
+	SimpleJdbcUpdate update(TtxSession session) {
+		jdbc.update(session.db)
+	}
+	/**
+	 * 将一个 JavaBean 对象转化为一个  Map
+	 * @param bean 要转化的JavaBean 对象
+	 * @return 转化出来的  Map 对象
+	 * @throws IntrospectionException 如果分析类属性失败
+	 * @throws IllegalAccessException 如果实例化 JavaBean 失败
+	 * @throws InvocationTargetException 如果调用属性的 setter 方法失败
+	 */
+	public static Map convertBean(Object bean)
+			throws IntrospectionException, IllegalAccessException, InvocationTargetException {
+		Class type = bean.getClass();
+		Map returnMap = new HashMap();
+		BeanInfo beanInfo = Introspector.getBeanInfo(type);
+		PropertyDescriptor[] propertyDescriptors =  beanInfo.getPropertyDescriptors();
+		for (int i = 0; i< propertyDescriptors.length; i++) {
+			PropertyDescriptor descriptor = propertyDescriptors[i];
+			String propertyName = descriptor.getName();
+			if (!(propertyName.equals("class") || propertyName.equals("metaClass"))) {
+				Method readMethod = descriptor.getReadMethod();
+				Object result = readMethod.invoke(bean, new Object[0]);
+				if (result != null) {
+					returnMap.put(propertyName, result);
+				} else {
+					returnMap.put(propertyName, "");
+				}
+			}
+		}
+		return returnMap;
+	}
+	public static Map<String, Object> beanToMap(Object obj) {
+		Map<String, Object> params = new HashMap<String, Object>(0);
+		try {
+			PropertyUtilsBean propertyUtilsBean = new PropertyUtilsBean();
+			PropertyDescriptor[] descriptors = propertyUtilsBean.getPropertyDescriptors(obj);
+			for (int i = 0; i < descriptors.length; i++) {
+				String name = descriptors[i].getName();
+				if (!(name.equals("class") || name.equals("metaClass"))) {
+					params.put(name, propertyUtilsBean.getNestedProperty(obj, name));
+				}
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+			return params;
+	}
+
+				
+	/**
+	 * 将一个 Map 对象转化为一个 JavaBean
+	 * @param type 要转化的类型
+	 * @param map 包含属性值的 map
+	 * @return 转化出来的 JavaBean 对象
+	 * @throws IntrospectionException
+	 *             如果分析类属性失败
+	 * @throws IllegalAccessException
+	 *             如果实例化 JavaBean 失败
+	 * @throws InstantiationException
+	 *             如果实例化 JavaBean 失败
+	 * @throws InvocationTargetException
+	 *             如果调用属性的 setter 方法失败
+	 */
+	public static Object convertMap(Class type, Map map)
+			throws IntrospectionException, IllegalAccessException,
+			InstantiationException, InvocationTargetException {
+		BeanInfo beanInfo = Introspector.getBeanInfo(type); // 获取类属性
+		Object obj = type.newInstance(); // 创建 JavaBean 对象
+
+		// 给 JavaBean 对象的属性赋值
+		PropertyDescriptor[] propertyDescriptors =  beanInfo.getPropertyDescriptors();
+		for (int i = 0; i< propertyDescriptors.length; i++) {
+			PropertyDescriptor descriptor = propertyDescriptors[i];
+			String propertyName = descriptor.getName();
+
+			if (map.containsKey(propertyName)) {
+				// 下面一句可以 try 起来，这样当一个属性赋值失败的时候就不会影响其他属性赋值。
+				Object value = map.get(propertyName);
+
+				Object[] args = new Object[1];
+				args[0] = value;
+
+				descriptor.getWriteMethod().invoke(obj, args);
+			}
+		}
+		return obj;
+	}
+			
+}
